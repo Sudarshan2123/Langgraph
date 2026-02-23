@@ -1,0 +1,44 @@
+# local development  configuration
+config:
+  MONGODB_URI: "mongodb://test_user2:Pa$$woRD256$@10.192.5.46:27017/?directConnection=true"
+  DB_NAME: hr_ai_chatbot
+  HISTORY_COLLECTION_NAME: structured_logs
+  HISTORY_COLLECTION_Logs: structured_history_logs
+  collection_user: User
+  SECRET_KEY: mia_chat_botxxxx
+  ALGORITHM: HS256
+  ACCESS_TOKEN_EXPIRE_MINUTES: 30
+  CIPHER_KEY: PVmmpjmeRmvPHuoKEiHw5FJntTM2sJAe8baw_8L6RHE=
+  DB_PATH: /app/Sqllite/Bot.db
+  RAG_MODEL: gemini-2.5-flash
+  EMBEDD_MODEL: text-embedding-004
+  API_KEY: AIzaSyA7hjnwNtqS0ejsownrDgMQOulbR7gaLNM
+  SQLLITE_CONNECTION_STRING: sqlite:////app/Sqllite/Bot.db
+  maxPoolSize : 350
+  POSTGRES_HOST: 10.192.5.51
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: postgres
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: postgres
+  REDIS_USERNAME : default
+  REDIS_PASSWORD : redis@123#
+  REDIS_HOST: my_redis_server
+  REDIS_PORT: 6379
+  REDIS_DB: 0
+  CACHE_TTL: 28800
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
