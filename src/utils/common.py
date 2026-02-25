@@ -3,16 +3,14 @@ from box.exceptions import BoxValueError
 from ensure import ensure_annotations
 from box import ConfigBox
 from pathlib import Path
-from typing import Any
 import yaml
-from src.logging import logger
+import logging
 from cryptography.fernet import Fernet
 import time
 from functools import wraps
 import base64
-from fastapi.responses import JSONResponse
-import os,urllib.parse,requests,html
-from fastapi import  HTTPException,Body
+import os,requests
+from fastapi import  HTTPException
 @ensure_annotations
 def read_yaml(path_to_yaml: Path) -> ConfigBox:
     """reads yaml file and returns
@@ -30,7 +28,7 @@ def read_yaml(path_to_yaml: Path) -> ConfigBox:
     try:
         with open(path_to_yaml) as yaml_file:
             content = yaml.safe_load(yaml_file)
-            logger.info(f"yaml file: {path_to_yaml} loaded successfully")
+            logging.info(f"yaml file: {path_to_yaml} loaded successfully")
             return ConfigBox(content)
     except BoxValueError:
         raise ValueError("yaml file is empty")
@@ -50,7 +48,7 @@ def create_directories(path_to_directories: list, verbose=True):
     for path in path_to_directories:
         os.makedirs(path, exist_ok=True)
         if verbose:
-            logger.info(f"created directory at: {path}")
+            logging.info(f"created directory at: {path}")
 
 
 
@@ -84,7 +82,7 @@ def time_it(func):
         end_time = time.time()  # Record the end time
         execution_time = end_time - start_time  # Calculate the duration
         print(f"Function '{func.__name__}' executed in {execution_time:.4f} seconds")
-        logger.info(f"Function '{func.__name__}' executed in {execution_time:.4f} seconds")
+        logging.info(f"Function '{func.__name__}' executed in {execution_time:.4f} seconds")
         return result  # Return the result of the function
     return wrapper
 

@@ -1,6 +1,6 @@
 from src.constants._init_ import CONFIG_FILE_PATH
 from src.utils.common import read_yaml
-from src.entity import (AgentState, Base_Config)
+from src.entity._init_ import (AgentState, Base_Config)
 
 class ConfigurationManager:
     def __init__(

@@ -6,8 +6,8 @@ Replaces static pattern matching with LLM-powered intent detection
 import logging
 from typing import  Literal, Optional
 from enum import Enum
+from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
-from langchain_google_vertexai import ChatVertexAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 
@@ -60,7 +60,7 @@ class IntentClassifier:
     - Out-of-scope requests
     """
 
-    def __init__(self, llm: ChatVertexAI):
+    def __init__(self, llm: ChatOllama):
         """
         Initialize intent classifier.
 
@@ -254,7 +254,7 @@ class GreetingGenerator:
     Generates dynamic, contextual greeting responses.
     """
 
-    def __init__(self, llm: ChatVertexAI):
+    def __init__(self, llm: ChatOllama):
         """
         Initialize greeting generator.
 
@@ -363,7 +363,7 @@ class OutOfScopeHandler:
     Handles out-of-scope requests with helpful redirects.
     """
 
-    def __init__(self, llm: ChatVertexAI):
+    def __init__(self, llm: ChatOllama):
         """
         Initialize out-of-scope handler.
 

@@ -6,11 +6,12 @@ Replaces static pattern matching with LLM-powered intent detection
 import logging
 from typing import  Literal, Optional
 from enum import Enum
+from langchain_anthropic import ChatAnthropic
 from pydantic import BaseModel, Field
-from langchain_google_vertexai import ChatVertexAI
+# from langchain_google_vertexai import ChatVertexAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
-
+# from langchain_ollama import ChatOllama
 logger = logging.getLogger(__name__)
 
 
@@ -60,7 +61,7 @@ class IntentClassifier:
     - Out-of-scope requests
     """
 
-    def __init__(self, llm: ChatVertexAI):
+    def __init__(self, llm: ChatAnthropic):
         """
         Initialize intent classifier.
 
@@ -254,7 +255,7 @@ class GreetingGenerator:
     Generates dynamic, contextual greeting responses.
     """
 
-    def __init__(self, llm: ChatVertexAI):
+    def __init__(self, llm: ChatAnthropic):
         """
         Initialize greeting generator.
 
@@ -363,7 +364,7 @@ class OutOfScopeHandler:
     Handles out-of-scope requests with helpful redirects.
     """
 
-    def __init__(self, llm: ChatVertexAI):
+    def __init__(self, llm: ChatAnthropic):
         """
         Initialize out-of-scope handler.
 
@@ -388,6 +389,20 @@ class OutOfScopeHandler:
             "and other HR-related queries. What would you like to know about our employee data?"
         )
 
+
+
+class UnclaerHandler:
+    """Handler Unclear Scope requests with redirects"""
+
+    def __init__(self,llm:ChatAnthropic):
+        """
+        initialized unclear scope Handle
+        
+        Args: 
+           llm:Uses Chatollama
+        """
+        # llm = ChatOllama(model = "llama3.1",temperature = 0,reasoning=True)
+
     def handle_unclear(self, user_input: str) -> str:
         """
         Handle unclear or ambiguous input.
@@ -403,3 +418,4 @@ class OutOfScopeHandler:
             "Could you please rephrase your question? For example, you can ask about employee details, "
             "leave records, department information, or any HR-related data."
         )
+
