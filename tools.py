@@ -3,9 +3,6 @@ from langchain_core.tools import tool
 
 
 # --- Tool definitions ---
-
-
-
 @tool
 def greetings(user_input: str) -> str:
     """Handle greeting intents."""
@@ -26,7 +23,7 @@ def unclear(user_input:str) -> str:
     """Handle mixed intents."""
     from singleton import get_pipeline
     pipeline = get_pipeline()
-    return pipeline.mixed_handler.handle_mixed(user_input)
+    return pipeline.mixed_handler.handle_unclear(user_input)
 
 
 tools = [greetings, out_of_scope, unclear]

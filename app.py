@@ -1,14 +1,15 @@
 import os
+from langchain_core.messages.ai import AIMessage
 from langchain_ollama import ChatOllama
-from langgraph.graph import StateGraph, START, MessagesState,END
-from langchain_core.messages import AIMessage, HumanMessage,SystemMessage
+from langgraph.graph import END, StateGraph, START, MessagesState
+from langchain_core.messages import HumanMessage,SystemMessage, ToolMessage
 from langgraph.prebuilt import ToolNode, tools_condition
-from langchain_anthropic import ChatAnthropic
-from classifier import IntentClassification
+from agentState import AgentState
+from pipeline.intent_classifier import IntentClassification
 from singleton import get_pipeline
 from tools import tools
 import translate
-
+import logging
 
 SIMPLE_GREETINGS = [
     'hi', 'hii', 'hiii', 'hiiii', 'hello', 'hey', 'bye', 'thanks', 'thank you'
@@ -41,6 +42,7 @@ def intent_classifier(translated_input: str) -> IntentClassification:
         IntentClassification object
     """
     pipeline = get_pipeline()
+    logging.info(f"Translated input: {translated_input}")
     classification = pipeline.intent_classifier.classify_intent(translated_input)
     return classification  # Fixed: was missing return
 
@@ -48,14 +50,15 @@ def intent_classifier(translated_input: str) -> IntentClassification:
 # --- LangGraph Node Functions ---
 # Node functions must accept and return state dicts
 
-def translate_node(state: MessagesState) -> dict:
+def translate_node(state: AgentState) -> dict:
     """Translation node: translates the latest user message."""
     last_message = state["messages"][-1]
-    user_input = last_message.content
-
-    # Detect language from message metadata if available, default to "en-US"
-    lang = getattr(last_message, "lang", "en-US")
-
+    if isinstance(last_message, dict):
+        user_input = last_message.get("content", "")
+        lang = last_message.get("lang", "en-US")
+    else:
+        user_input = last_message.content
+        lang = getattr(last_message, "lang", "en-US")
     translated = translate_input(user_input, lang)
 
     # Replace the last message content with translated text
@@ -63,40 +66,48 @@ def translate_node(state: MessagesState) -> dict:
     return {"messages": state["messages"][:-1] + [updated_message]}
 
 
-def classifier_node(state: MessagesState) -> dict:
+def classifier_node(state: AgentState) -> dict:
     """Intent classification node."""
-    last_message = state["messages"][-1]
-    classification = intent_classifier(last_message.content)
+    last_message = state["messages"][-1].content
+    logging.info(f"Last message: {last_message}")
+    classification = intent_classifier(last_message)
 
     # Return classification result as an AI message
-    response_text = f"Intent classified as: {classification.primary_intent}"
-    return {"messages": state["messages"] + [AIMessage(content=response_text)]}
+    # response_text = f"Intent classified as: {classification.primary_intent}"
+    return {"classification": classification}
 
-def assistant_node(state:MessagesState) -> dict:
+def assistant_node(state:AgentState) -> dict:
     """ Classified intent is pass to assitant to redirect it to tools"""
     sys_msg = SystemMessage(content=("You are an Assistant whose job is to invoke the required tools "
-                                     "and return the output in a proper format."
+                                     "and return the response output in a exact same format as give by the tools."
     ))
     return {"messages": [llm.invoke([sys_msg] + state["messages"])]}
 
+def finalResponder(state:AgentState) -> dict:
+    last_message = state["messages"][-1]
 
-llm = ChatOllama(model="llama3.2:latest").bind_tools(tools)
+    if isinstance(last_message,ToolMessage):
+        return {"messages":[AIMessage(content=last_message.content)]}
+
+
+llm = ChatOllama(model="llama3.2:latest",temperature=0.1).bind_tools(tools)
 # --- Build Graph ---
-builder = StateGraph(MessagesState)
+builder = StateGraph(AgentState)
 
 # Fixed: node names must match what's used in add_edge/add_conditional_edges
 builder.add_node("translate_input", translate_node)
 builder.add_node("intent_classifier", classifier_node)
 builder.add_node("assistant",assistant_node)
 builder.add_node("tools", ToolNode(tools))
+builder.add_node("final_responder",finalResponder)
 
 # Fixed: added START edge and corrected node name references
 builder.add_edge(START, "translate_input")
 builder.add_edge("translate_input", "intent_classifier")
 builder.add_edge("intent_classifier", "assistant")
-builder.add_conditional_edges("assistant", tools_condition) 
-builder.add_edge("tools","assistant")
-builder.add_edge("assistant",END) # Loop back after tool execution
+builder.add_conditional_edges("assistant", tools_condition,{"tools":"tools","__end__":END}) 
+builder.add_edge("tools","final_responder")
+builder.add_edge("final_responder",END)
 
 # Compile graph
 graph = builder.compile()

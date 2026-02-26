@@ -6,12 +6,10 @@ Replaces static pattern matching with LLM-powered intent detection
 import logging
 from typing import  Literal, Optional
 from enum import Enum
-from langchain_anthropic import ChatAnthropic
+from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 # from langchain_google_vertexai import ChatVertexAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import JsonOutputParser
-# from langchain_ollama import ChatOllama
 logger = logging.getLogger(__name__)
 
 
@@ -61,7 +59,7 @@ class IntentClassifier:
     - Out-of-scope requests
     """
 
-    def __init__(self, llm: ChatAnthropic):
+    def __init__(self, llm: ChatOllama):
         """
         Initialize intent classifier.
 
@@ -69,7 +67,7 @@ class IntentClassifier:
             llm: VertexAI LLM instance
         """
         self.llm = llm
-        self.parser = JsonOutputParser(pydantic_object=IntentClassification)
+        self.structured_output = llm.with_structured_output(IntentClassification)
         self._init_classifier_chain()
 
         # 🔧 Add cache for common inputs
@@ -90,7 +88,7 @@ class IntentClassifier:
             ("human", "{user_input}")
         ])
 
-        self.classifier_chain = prompt_template | self.llm | self.parser
+        self.classifier_chain = prompt_template | self.llm 
 
     def _get_classification_prompt(self) -> str:
         """Get the system prompt for intent classification"""
@@ -128,7 +126,7 @@ class IntentClassifier:
 **CRITICAL RULES**:
 - Be VERY tolerant of typos and variations (up to 3 character errors per word)
 - "helo" → GREETING
-- "hiii" → GREETING (repeated letters are common in casual greetings)
+- "hiii" → GREETING 
 - "hiiii" → GREETING
 - "gud mornign" → GREETING
 - "show employe detals" → DATA_QUERY (tolerate typos)
@@ -136,48 +134,37 @@ class IntentClassifier:
 - If unsure between GREETING and DATA_QUERY, choose DATA_QUERY (better to try than reject)
 
 **OUTPUT FORMAT**:
-Respond with ONLY valid JSON (no markdown, no explanations):
+Respond with ONLY valid YAML (no markdown code blocks, no preamble, no explanations):
 
-{{
-  "primary_intent": "greeting" | "data_query" | "mixed" | "out_of_scope" | "unclear",
-  "secondary_intent": null | "greeting" | "data_query",
-  "confidence": "high" | "medium" | "low",
-  "extracted_query": "only for mixed intent - the data query part",
-  "greeting_type": "formal" | "casual" | "time_based" | "farewell" | "gratitude" (only for greetings),
-  "requires_data_access": true | false,
-  "reasoning": "1 sentence explanation"
-}}
+primary_intent: "greeting" | "data_query" | "mixed" | "out_of_scope" | "unclear"
+secondary_intent: null | "greeting" | "data_query"
+confidence: "high" | "medium" | "low"
+extracted_query: "only for mixed intent - the data query part"
+greeting_type: "formal" | "casual" | "time_based" | "farewell" | "gratitude" | null
+requires_data_access: true | false
+reasoning: "1 sentence explanation"
 
 **EXAMPLES**:
 
 Input: "hiii"
-Output: {{
-  "primary_intent": "greeting",
-  "confidence": "high",
-  "greeting_type": "casual",
-  "requires_data_access": false,
-  "reasoning": "Casual greeting with repeated letters (common in informal communication)"
-}}
+Output:
+primary_intent: greeting
+secondary_intent: null
+confidence: high
+extracted_query: null
+greeting_type: casual
+requires_data_access: false
+reasoning: Casual greeting with repeated letters common in informal communication.
 
-Input: "Hi! Show me employees in IT department"
-Output: {{
-  "primary_intent": "mixed",
-  "secondary_intent": "data_query",
-  "confidence": "high",
-  "extracted_query": "Show me employees in IT department",
-  "greeting_type": "casual",
-  "requires_data_access": true,
-  "reasoning": "Greeting followed by specific data query"
-}}
-
-Input: "give me details for employee sreeram p"
-Output: {{
-  "primary_intent": "data_query",
-  "confidence": "high",
-  "requires_data_access": true,
-  "reasoning": "Direct request for specific employee data"
-
-}}"""
+Input: "Good morning, show me the leave balance for John Doe"
+Output:
+primary_intent: mixed
+secondary_intent: data_query
+confidence: high
+extracted_query: show me the leave balance for John Doe
+greeting_type: time_based
+requires_data_access: true
+reasoning: Message contains both a time-based greeting and a specific HR data request."""
 
     def clear_cache(self):
         """Clear the classification cache"""
@@ -200,8 +187,8 @@ Output: {{
         if cache_key in self._classification_cache:
             return self._classification_cache[cache_key]
         try:
-            result = self.classifier_chain.invoke({"user_input": user_input})
-            classification = IntentClassification(**result)
+            classification = self.classifier_chain.invoke({"user_input": user_input})
+            # classification = IntentClassification(**result)
 
              # Cache the result
             if len(self._classification_cache) >= self._cache_max_size:
@@ -255,7 +242,7 @@ class GreetingGenerator:
     Generates dynamic, contextual greeting responses.
     """
 
-    def __init__(self, llm: ChatAnthropic):
+    def __init__(self, llm: ChatOllama):
         """
         Initialize greeting generator.
 
@@ -364,7 +351,7 @@ class OutOfScopeHandler:
     Handles out-of-scope requests with helpful redirects.
     """
 
-    def __init__(self, llm: ChatAnthropic):
+    def __init__(self, llm: ChatOllama):
         """
         Initialize out-of-scope handler.
 
@@ -384,9 +371,10 @@ class OutOfScopeHandler:
             Polite redirection message
         """
         return (
-            "I appreciate your message, but I'm specifically designed to help with employee and HR data analysis. "
-            "I can assist you with questions about employee records, leave balances, department information, "
-            "and other HR-related queries. What would you like to know about our employee data?"
+            f"I appreciate your message: '{user_input}'. However, I'm specifically designed to help with "
+            "employee and HR data analysis. I can assist you with questions about employee records, leave "
+            "balances, department information, and other HR-related queries. What would you like to know "
+            "about our employee data?"
         )
 
 
@@ -394,14 +382,14 @@ class OutOfScopeHandler:
 class UnclaerHandler:
     """Handler Unclear Scope requests with redirects"""
 
-    def __init__(self,llm:ChatAnthropic):
+    def __init__(self,llm:ChatOllama):
         """
         initialized unclear scope Handle
         
         Args: 
            llm:Uses Chatollama
         """
-        # llm = ChatOllama(model = "llama3.1",temperature = 0,reasoning=True)
+        self.llm = llm 
 
     def handle_unclear(self, user_input: str) -> str:
         """
