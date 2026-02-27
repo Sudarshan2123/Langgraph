@@ -76,6 +76,35 @@ def classifier_node(state: AgentState) -> dict:
     # response_text = f"Intent classified as: {classification.primary_intent}"
     return {"classification": classification}
 
+def route_after_classification(state: AgentState):
+    classification = state["classification"]
+    
+    if classification.primary_intent == "greeting" or classification.secondary_intent == "greeting":
+        return "handle_greeting"
+    
+    if classification.primary_intent == "out_of_scope":
+        return "handle_out_of_scope"
+    
+    if classification.primary_intent == "unclear":
+        return "handle_unclear"
+    
+    return "assistant"
+
+def greeting_handler_node(state: AgentState):
+    pipeline = get_pipeline()
+    last_msg = state["messages"][-1].content
+    response = pipeline.greeting_generator.generate_greeting(
+        last_msg, 
+        state["classification"].greeting_type or "casual"
+    )
+    return {"messages": [AIMessage(content=response)]}
+
+def out_of_scope_handler_node(state: AgentState):
+    pipeline = get_pipeline()
+    last_msg = state["messages"][-1].content
+    response = pipeline.out_of_scope_handler.handle_out_of_scope(last_msg)
+    return {"messages": [AIMessage(content=response)]}
+
 def assistant_node(state:AgentState) -> dict:
     """ Classified intent is pass to assitant to redirect it to tools"""
     sys_msg = SystemMessage(content=("You are an Assistant whose job is to invoke the required tools "
@@ -98,16 +127,21 @@ builder = StateGraph(AgentState)
 builder.add_node("translate_input", translate_node)
 builder.add_node("intent_classifier", classifier_node)
 builder.add_node("assistant",assistant_node)
+builder.add_node("handle_greeting",greeting_handler_node)
+builder.add_node("handle_out_of_scope",out_of_scope_handler_node)
 builder.add_node("tools", ToolNode(tools))
-builder.add_node("final_responder",finalResponder)
 
 # Fixed: added START edge and corrected node name references
 builder.add_edge(START, "translate_input")
 builder.add_edge("translate_input", "intent_classifier")
-builder.add_edge("intent_classifier", "assistant")
-builder.add_conditional_edges("assistant", tools_condition,{"tools":"tools","__end__":END}) 
-builder.add_edge("tools","final_responder")
-builder.add_edge("final_responder",END)
+builder.add_conditional_edges("intent_classifier", route_after_classification, {
+    "handle_greeting":"handle_greeting",
+    "handle_out_of_scope":"handle_out_of_scope",
+    "assistant":"assistant"
+}) 
+builder.add_edge("handle_greeting",END)
+builder.add_edge("handle_out_of_scope",END)
+builder.add_edge("assistant","tools")
 
 # Compile graph
 graph = builder.compile()

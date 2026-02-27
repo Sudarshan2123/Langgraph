@@ -88,7 +88,7 @@ class IntentClassifier:
             ("human", "{user_input}")
         ])
 
-        self.classifier_chain = prompt_template | self.llm 
+        self.classifier_chain = prompt_template | self.structured_output 
 
     def _get_classification_prompt(self) -> str:
         """Get the system prompt for intent classification"""
@@ -267,43 +267,21 @@ class GreetingGenerator:
 
     def _get_generation_prompt(self) -> str:
         """Get the system prompt for greeting generation"""
-        return """You are MACOM AI Assistant, a friendly and professional employee data analysis chatbot.
+        return """You are an intent classification expert for an employee data analysis chatbot called MACOM AI Assistant.
 
-**YOUR TASK**: Generate a warm, natural greeting response.
+**YOUR TASK**: Analyze the user's message and classify their intent.
 
-**PERSONALITY TRAITS**:
-- Professional but approachable
-- Enthusiastic about helping with employee data
-- Concise (2-3 sentences max)
-- Adaptive to user's tone
-
-**RESPONSE GUIDELINES**:
-
-1. **Casual Greetings** (hi, hey, hello):
-   - "Hello! I'm MACOM AI Assistant. I can help you analyze employee records, leave data, and HR information. What would you like to know?"
-
-2. **Time-based Greetings** (good morning, good evening):
-   - Mirror the time reference: "Good morning! Ready to help you..."
-   - Add slight variation: "Good afternoon! I'm here to assist with..."
-
-3. **Formal Greetings** (greetings, good day):
-   - Match formality: "Greetings! I am MACOM AI Assistant, your..."
-
-4. **Farewells** (bye, goodbye, see you):
-   - Warm closure: "Goodbye! Feel free to return anytime you need help with employee data."
-   - Add helpfulness: "Take care! I'm here whenever you need assistance."
-
-5. **Gratitude** (thanks, thank you):
-   - Acknowledge: "You're welcome! Happy to help."
-   - Encourage return: "My pleasure! Let me know if you need anything else."
+**AVAILABLE INTENTS**:
+1. **GREETING**: Hello, goodbye, gratitude, or typos (helo, hiii).
+2. **DATA_QUERY**: Retrieve/analyze employee/HR data.
+3. **MIXED**: Greeting + Data query (e.g., "Hi, show me my leave balance").
+4. **OUT_OF_SCOPE**: Unrelated to HR (weather, jokes, etc.).
+5. **UNCLEAR**: Ambiguous or nonsensical input.
 
 **CRITICAL RULES**:
-- NEVER mention that you detected a typo
-- Keep responses fresh (slight variations each time)
-- Always mention you can help with employee/HR/leave data
-- Stay within 2-3 sentences
-- NO markdown formatting, NO bullet points
-- Sound natural, like a helpful colleague"""
+- Be VERY tolerant of typos (up to 3 character errors).
+- Mixed intents must extract the query portion.
+- If unsure, prefer DATA_QUERY over rejection."""
 
     def generate_greeting(
         self,
@@ -379,7 +357,7 @@ class OutOfScopeHandler:
 
 
 
-class UnclaerHandler:
+class UnclearHandler:
     """Handler Unclear Scope requests with redirects"""
 
     def __init__(self,llm:ChatOllama):

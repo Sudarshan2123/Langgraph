@@ -2,7 +2,7 @@
 
 from langchain_ollama import ChatOllama
 from tools import tools
-from src.pipeline.intent_classifier import IntentClassifier,GreetingGenerator,OutOfScopeHandler,UnclaerHandler
+from src.pipeline.intent_classifier import IntentClassifier,GreetingGenerator,OutOfScopeHandler,UnclearHandler
 from src.config.configuration import ConfigurationManager
 
 class Init :
@@ -28,13 +28,13 @@ class Init :
     #     credentials=credentials
     # )
     # self.rag_instance = RAGPipeline()
-    self.llm = ChatOllama(model="deepseek-r1:8b",temperature=0.1).bind_tools(tools)
-    self.intent_llm = ChatOllama(model="llama3.2:latest", temperature=0) 
+    self.llm = ChatOllama(model="deepseek-r1:8b",temperature=0.2).bind_tools(tools)
+    self.intent_llm = ChatOllama(model="llama3.2:latest", temperature=0.1) 
     self.intent_classifier = IntentClassifier(self.intent_llm)
     self.intent_classifier.clear_cache()
     self.greeting_generator = GreetingGenerator(self.intent_llm)
     self.out_of_scope_handler = OutOfScopeHandler(self.intent_llm)
-    self.unclear_handler = UnclaerHandler(self.intent_llm) 
+    self.unclear_handler = UnclearHandler(self.intent_llm) 
     # self.conversation_manager = ConversationManager(self.config)
     # self.session_manager = SessionManager(self.config)
     # self.streaming_chatbot = StreamingChatbot(self.intent_llm)
