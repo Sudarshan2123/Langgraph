@@ -7,7 +7,7 @@ class DataAnalyzer:
     Orchestrates routing and analysis operations.
     """
     
-    def __init__(self, config, , enable_naturalization=True):
+    def __init__(self, config, vertex_llm, enable_naturalization=True):
         """Initialize with optional response naturalization"""
         try:
             
@@ -15,7 +15,7 @@ class DataAnalyzer:
             self.db_manager = get_pipeline()
             
             # Initialize LLM with optimized settings
-            self.vertex_llm = 
+            self.vertex_llm = vertex_llm
             
             # Initialize components
             self.router = TableRouter(self.llm)
