@@ -11,7 +11,7 @@ def structure_data(user_input: str) -> str:
     pipeline = get_pipeline()
     conndata = pipeline.Database.get_table_names()
     agent_state = pipeline.config_obj.AgentState(conndata, user_input)
-    state_with_intent = analyzer.detect_table_intent(agent_state)
+    # state_with_intent = analyzer.detect_table_intent(agent_state)
     return pipeline.greeting_generator.generate_greeting(user_input, "casual")
 
 
@@ -30,4 +30,4 @@ def unclear(user_input:str) -> str:
     return pipeline.mixed_handler.handle_unclear(user_input)
 
 
-tools = [greetings, out_of_scope, unclear]
+tools = [structure_data, out_of_scope, unclear]

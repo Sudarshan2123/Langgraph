@@ -4,42 +4,45 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import Engine, QueuePool, create_engine, text
 from agentState import AgentState
-from singleton import Init
 import logging
 import redis
 
 class DataBase:
-    def __init__(self):
+    def __init__(self,config = None):
+        from singleton import Init
+        if config is not None:
+            self.config = config
+        else:
+            from singleton import Init
+            self.config = Init()
+            self.engine: Optional[Engine] = None
+            self.connection = None
+            self.is_connected = False
+            self.schema = None
+            try:
+                self.redis_client = redis.Redis(
+                    host=self.config.REDIS_HOST,
+                    port=self.config.REDIS_PORT,
+                    username=self.config.REDIS_USERNAME,
+                    password=self.config.REDIS_PASSWORD,
+                    db=self.config.REDIS_DB,
+                    decode_responses=False,
+                    socket_timeout=5,
+                    socket_connect_timeout=5
+                )
+                self.redis_client.ping()
+                self.redis_enabled = True
+                logging.info(f"Redis cache connected at {self.config.REDIS_HOST}:{self.config.REDIS_PORT}")
+            except Exception as e:
+                logging.warning(f"Redis unavailable: {e}. Using direct DB access.")
+                self.redis_enabled = False
+                self.redis_client = None
 
-        self.config = Init()
-        self.engine: Optional[Engine] = None
-        self.connection = None
-        self.is_connected = False
-        self.schema = None
-        try:
-            self.redis_client = redis.Redis(
-                host=self.config.REDIS_HOST,
-                port=self.config.REDIS_PORT,
-                username=self.config.REDIS_USERNAME,
-                password=self.config.REDIS_PASSWORD,
-                db=self.config.REDIS_DB,
-                decode_responses=False,
-                socket_timeout=5,
-                socket_connect_timeout=5
-            )
-            self.redis_client.ping()
-            self.redis_enabled = True
-            logging.info(f"Redis cache connected at {self.config.REDIS_HOST}:{self.config.REDIS_PORT}")
-        except Exception as e:
-            logging.warning(f"Redis unavailable: {e}. Using direct DB access.")
-            self.redis_enabled = False
-            self.redis_client = None
-
-            self.cache_ttl = self.config.CACHE_TTL
-        
-        # Query result cache (in-memory for fast repeated queries)
-        self._query_cache = {}
-        self._query_cache_max_size = 1000
+                self.cache_ttl = self.config.CACHE_TTL
+            
+            # Query result cache (in-memory for fast repeated queries)
+            self._query_cache = {}
+            self._query_cache_max_size = 1000
 
     def connect(self) -> bool:
         try:
@@ -71,7 +74,7 @@ class DataBase:
             self.is_connected = True
             self.schema = 'public'
             logging.info(f"Connected to PostgreSQL '{self.config.POSTGRES_DB}' as '{self.config.POSTGRES_USER}'")
-            return True
+            return self.engine
     
         except Exception as e:
             logging.error(f"Failed to connect to PostgreSQL: {e}")

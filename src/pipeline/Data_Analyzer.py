@@ -1,5 +1,13 @@
-from singleton import get_pipeline
 
+
+
+import logging
+from typing import Dict, List
+import pandas as pd 
+from langchain_community.agent_toolkits import SQLDatabaseToolkit
+from entity.core import AnalysisDecision, TableMetadata
+from langchain_community.utilities import SQLDatabase
+from langchain_community.agent_toolkits import create_sql_agent
 
 class DataAnalyzer:
     """
@@ -7,44 +15,43 @@ class DataAnalyzer:
     Orchestrates routing and analysis operations.
     """
     
-    def __init__(self, config, vertex_llm, enable_naturalization=True):
+    def __init__(self, config, vertex_llm, engine, enable_naturalization=True):
         """Initialize with optional response naturalization"""
         try:
             
             self.config = config
-            self.db_manager = get_pipeline()
             
             # Initialize LLM with optimized settings
             self.vertex_llm = vertex_llm
             
             # Initialize components
-            self.router = TableRouter(self.llm)
+            # self.router = TableRouter(self.llm)
 
             # 🔧 NEW: Initialize Database Toolkit
-            sql_engine = db_manager.get_sqlalchemy_engine()
+            sql_engine = engine
             db = SQLDatabase(
                 engine=sql_engine,
-                schema=db_manager.schema,
+                schema="public",
                 include_tables=None  # Allow dynamic table discovery
             )
             
-            self.toolkit = SQLDatabaseToolkit(db=db, llm=self.llm)
+            self.toolkit = SQLDatabaseToolkit(db=db, llm=self.vertex_llm)
             self.tools = self.toolkit.get_tools()
             
-            logger.info(f"Initialized {len(self.tools)} database interaction tools")
+            logging.info(f"Initialized {len(self.tools)} database interaction tools")
             
             # NEW: Initialize naturalizer
             self.enable_naturalization = enable_naturalization
             if enable_naturalization:
-                self.naturalizer = ResponseNaturalizer(self.llm)
-                logger.info("Response naturalization enabled")
+                # self.naturalizer = ResponseNaturalizer(self.llm)
+                logging.info("Response naturalization enabled")
             else:
                 self.naturalizer = None
             
-            logger.info("DataAnalyzer (SQL Mode) initialized successfully")
+            logging.info("DataAnalyzer (SQL Mode) initialized successfully")
             
         except Exception as e:
-            logger.error(f"Failed to initialize DataAnalyzer: {e}")
+            logging.error(f"Failed to initialize DataAnalyzer: {e}")
             raise
     
     def detect_table_intent(self, state: dict) -> dict:
@@ -61,7 +68,7 @@ class DataAnalyzer:
         available_tables = state.get("available_tables", {})
         
         if not available_tables:
-            logger.error("No tables available for routing")
+            logging.error("No tables available for routing")
             return {
                 **state,
                 "decision": AnalysisDecision.ERROR_NO_TABLES.value,
@@ -83,7 +90,7 @@ class DataAnalyzer:
             # Route tables
             routing_decision = self.router.route_tables(user_input, table_metadata)
             
-            logger.info(f"Routed to tables: {routing_decision.relevant_tables}")
+            logging.info(f"Routed to tables: {routing_decision.relevant_tables}")
             
             return {
                 **state,
@@ -99,7 +106,7 @@ class DataAnalyzer:
             }
             
         except Exception as e:
-            logger.error(f"Error in table routing: {e}", exc_info=True)
+            logging.error(f"Error in table routing: {e}", exc_info=True)
             return {
                 **state,
                 "selected_tables": [],
@@ -194,24 +201,24 @@ class DataAnalyzer:
         try:
             # Case 1: Already a clean string
             if isinstance(response, str):
-                logger.debug("Response is already a string")
+                logging.debug("Response is already a string")
                 return response.strip()
             
             # Case 2: Dictionary with 'output' key (most common)
             if isinstance(response, dict):
                 if 'output' in response:
                     output = response['output']
-                    logger.debug(f"Extracted 'output' key (type: {type(output)})")
+                    logging.debug(f"Extracted 'output' key (type: {type(output)})")
                     return self._extract_clean_response(output)
                 
-                logger.warning(f"Dict without 'output' key. Keys: {list(response.keys())}")
+                logging.warning(f"Dict without 'output' key. Keys: {list(response.keys())}")
                 if 'result' in response:
                     return self._extract_clean_response(response['result'])
                 return str(response)
             
             # Case 3: List of message chunks
             if isinstance(response, list):
-                logger.debug(f"Response is a list with {len(response)} items")
+                logging.debug(f"Response is a list with {len(response)} items")
                 text_parts = []
                 
                 for idx, item in enumerate(response):
@@ -222,22 +229,22 @@ class DataAnalyzer:
                 
                 if text_parts:
                     clean_text = ' '.join(text_parts).strip()
-                    logger.info(f"Extracted text from list: '{clean_text[:100]}...'")
+                    logging.info(f"Extracted text from list: '{clean_text[:100]}...'")
                     return clean_text
                 
                 return str(response)
             
             # Case 4: LangChain message objects
             if hasattr(response, 'content'):
-                logger.debug("Response has .content attribute")
+                logging.debug("Response has .content attribute")
                 return self._extract_clean_response(response.content)
             
             # Case 5: Unknown format
-            logger.warning(f"Unknown response type: {type(response)}")
+            logging.warning(f"Unknown response type: {type(response)}")
             return str(response)
             
         except Exception as e:
-            logger.error(f"Error in _extract_clean_response: {e}", exc_info=True)
+            logging.error(f"Error in _extract_clean_response: {e}", exc_info=True)
             return str(response)
     
     def analyze_data_with_routing(self, state: dict) -> str:
@@ -253,15 +260,15 @@ class DataAnalyzer:
                 return "Analysis error: Database engine is not available."
             
             db = SQLDatabase(
-                engine=sql_engine,
-                schema=self.db_manager.schema,
+                engine=self.engine,
+                schema="public",
                 include_tables=selected_tables
             )
 
              # 🔧 FIX: Create enhanced system prompt that enforces lookup table usage
             agent_system_prompt = self._create_lookup_aware_system_prompt(selected_tables)
             
-            logger.info(f"Creating SQL agent for tables: {selected_tables}")
+            logging.info(f"Creating SQL agent for tables: {selected_tables}")
             sql_agent_executor = create_sql_agent(
                 llm=self.llm,
                 db=db,
@@ -276,24 +283,24 @@ class DataAnalyzer:
             raw_response_dict = sql_agent_executor.invoke({"input": user_input})
             
             # Debug logging
-            logger.info(f"DEBUG - Agent output type: {type(raw_response_dict)}")
+            logging.info(f"DEBUG - Agent output type: {type(raw_response_dict)}")
             if isinstance(raw_response_dict, dict):
-                logger.info(f"DEBUG - Dict keys: {raw_response_dict.keys()}")
-                logger.info(f"DEBUG - Full output: {raw_response_dict.get('output', 'NO OUTPUT KEY')}")
+                logging.info(f"DEBUG - Dict keys: {raw_response_dict.keys()}")
+                logging.info(f"DEBUG - Full output: {raw_response_dict.get('output', 'NO OUTPUT KEY')}")
             
             # Extract response
             raw_response = self._extract_clean_response(raw_response_dict)
             
-            logger.info(f"Extracted response length: {len(raw_response)} chars")
-            logger.info(f"First 200 chars: {raw_response[:200]}")
-            logger.info(f"Last 100 chars: {raw_response[-100:] if len(raw_response) > 100 else raw_response}")
+            logging.info(f"Extracted response length: {len(raw_response)} chars")
+            logging.info(f"First 200 chars: {raw_response[:200]}")
+            logging.info(f"Last 100 chars: {raw_response[-100:] if len(raw_response) > 100 else raw_response}")
             
             # Skip naturalization - it's not adding value and may truncate
-            logger.info("Returning raw SQL agent response (naturalization disabled)")
+            logging.info("Returning raw SQL agent response (naturalization disabled)")
             return raw_response
             
         except Exception as e:
-            logger.error(f"Error in analysis: {e}", exc_info=True)
+            logging.error(f"Error in analysis: {e}", exc_info=True)
             return f"Analysis error: {str(e)}"
 
     def analyze_data_stream(
@@ -308,7 +315,7 @@ class DataAnalyzer:
         """
         # This would need session state from Streamlit
         # Better to inject dependencies instead
-        logger.warning("analyze_data_stream called - prefer routing-based method")
+        logging.warning("analyze_data_stream called - prefer routing-based method")
         
         # Create minimal state
         state = {

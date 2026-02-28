@@ -1,3 +1,4 @@
+import asyncio
 import os
 from langchain_core.messages.ai import AIMessage
 from langchain_ollama import ChatOllama
@@ -66,14 +67,18 @@ def translate_node(state: AgentState) -> dict:
     return {"messages": state["messages"][:-1] + [updated_message]}
 
 
-def classifier_node(state: AgentState) -> dict:
+async def classifier_node(state: AgentState) -> dict:
     """Intent classification node."""
     last_message = state["messages"][-1].content
     logging.info(f"Last message: {last_message}")
-    classification = intent_classifier(last_message)
-
-    # Return classification result as an AI message
-    # response_text = f"Intent classified as: {classification.primary_intent}"
+    
+    pipeline = get_pipeline()
+    # Run blocking LLM call in executor so it doesn't block the event loop
+    classification = await asyncio.get_event_loop().run_in_executor(
+        None, 
+        pipeline.intent_classifier.classify_intent, 
+        last_message
+    )
     return {"classification": classification}
 
 def route_after_classification(state: AgentState):
@@ -105,6 +110,12 @@ def out_of_scope_handler_node(state: AgentState):
     response = pipeline.out_of_scope_handler.handle_out_of_scope(last_msg)
     return {"messages": [AIMessage(content=response)]}
 
+def unclear_handler_node(state: AgentState):
+    pipeline = get_pipeline()
+    last_msg = state["messages"][-1].content
+    response = pipeline.unclear_handler.handle_unclear(last_msg)
+    return {"messages": [AIMessage(content=response)]}
+
 def assistant_node(state:AgentState) -> dict:
     """ Classified intent is pass to assitant to redirect it to tools"""
     sys_msg = SystemMessage(content=("You are an Assistant whose job is to invoke the required tools "
@@ -129,6 +140,7 @@ builder.add_node("intent_classifier", classifier_node)
 builder.add_node("assistant",assistant_node)
 builder.add_node("handle_greeting",greeting_handler_node)
 builder.add_node("handle_out_of_scope",out_of_scope_handler_node)
+builder.add_node("handle_unclear", unclear_handler_node)
 builder.add_node("tools", ToolNode(tools))
 
 # Fixed: added START edge and corrected node name references
@@ -137,11 +149,14 @@ builder.add_edge("translate_input", "intent_classifier")
 builder.add_conditional_edges("intent_classifier", route_after_classification, {
     "handle_greeting":"handle_greeting",
     "handle_out_of_scope":"handle_out_of_scope",
+    "handle_unclear": "handle_unclear",
     "assistant":"assistant"
 }) 
 builder.add_edge("handle_greeting",END)
 builder.add_edge("handle_out_of_scope",END)
-builder.add_edge("assistant","tools")
+builder.add_edge("handle_unclear", END)
+builder.add_conditional_edges("assistant", tools_condition)
+builder.add_edge("tools", "assistant")
 
 # Compile graph
 graph = builder.compile()
