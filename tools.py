@@ -1,13 +1,17 @@
 from langchain_core.tools import tool
+from requests import Response
 
 
 
 # --- Tool definitions ---
 @tool
-def greetings(user_input: str) -> str:
-    """Handle greeting intents."""
+def structure_data(user_input: str) -> str:
+    """Handle the user input to query the database for the data and provide the output for future process"""
     from singleton import get_pipeline
     pipeline = get_pipeline()
+    conndata = pipeline.Database.get_table_names()
+    agent_state = pipeline.config_obj.AgentState(conndata, user_input)
+    state_with_intent = analyzer.detect_table_intent(agent_state)
     return pipeline.greeting_generator.generate_greeting(user_input, "casual")
 
 
