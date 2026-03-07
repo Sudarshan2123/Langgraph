@@ -4,384 +4,266 @@ Replaces static pattern matching with LLM-powered intent detection
 """
 
 import logging
-from typing import  Literal, Optional
+from typing import Literal, Optional
 from enum import Enum
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
-# from langchain_google_vertexai import ChatVertexAI
 from langchain_core.prompts import ChatPromptTemplate
+
 logger = logging.getLogger(__name__)
 
 
 class IntentType(str, Enum):
-    """Types of user intents"""
     GREETING = "greeting"
     DATA_QUERY = "data_query"
-    MIXED = "mixed"  # Greeting + Query
+    POLICY_RAG_RETRIVAL = "policy_general_query"
     OUT_OF_SCOPE = "out_of_scope"
     UNCLEAR = "unclear"
 
 
 class IntentClassification(BaseModel):
-    """Structured intent classification result"""
-    primary_intent: IntentType = Field(
-        description="Primary intent of the user message"
-    )
-    secondary_intent: Optional[IntentType] = Field(
-        default=None,
-        description="Secondary intent if message has multiple purposes"
-    )
-    confidence: Literal["high", "medium", "low"] = Field(
-        description="Confidence level of classification"
-    )
-    extracted_query: Optional[str] = Field(
-        default=None,
-        description="For MIXED intent, the extracted data query portion"
-    )
-    greeting_type: Optional[str] = Field(
-        default=None,
-        description="Type of greeting: formal, casual, time_based, farewell, gratitude"
-    )
-    requires_data_access: bool = Field(
-        description="Whether this request needs database access"
-    )
-    reasoning: str = Field(
-        description="Brief explanation of classification decision"
-    )
+    primary_intent: IntentType = Field(description="Primary intent of the user message")
+    secondary_intent: Optional[IntentType] = Field(default=None, description="Secondary intent if message has multiple purposes")
+    confidence: Literal["high", "medium", "low"] = Field(description="Confidence level of classification")
+    extracted_query: Optional[str] = Field(default=None, description="Full user query for tool use")
+    greeting_type: Optional[str] = Field(default=None, description="Type of greeting: formal, casual, time_based, farewell, gratitude")
+    requires_tool_call: bool = Field(default=False, description="Whether this request needs a tool call")  # Fix: was requires_data_access
+    tool_to_use: Optional[str] = Field(default=None, description="Tool to use: Policy_RAG_Implementation or structure_data")  # Fix: added missing field
+    reasoning: str = Field(description="Brief explanation of classification decision")
 
 
 class IntentClassifier:
-    """
-    LLM-powered intent classifier that handles:
-    - Greetings (with typos)
-    - Data queries
-    - Mixed intents
-    - Out-of-scope requests
-    """
-
     def __init__(self, llm: ChatOllama):
-        """
-        Initialize intent classifier.
-
-        Args:
-            llm: VertexAI LLM instance
-        """
         self.llm = llm
         self.structured_output = llm.with_structured_output(IntentClassification)
         self._init_classifier_chain()
-
-        # 🔧 Add cache for common inputs
         self._classification_cache = {}
         self._cache_max_size = 100
-
-        # Clear cache on initialization to ensure fresh classifications
-        self._classification_cache.clear()
-
         logger.info("IntentClassifier initialized")
 
     def _init_classifier_chain(self):
-        """Initialize the classification chain"""
         system_prompt = self._get_classification_prompt()
-
         prompt_template = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
             ("human", "{user_input}")
         ])
-
-        self.classifier_chain = prompt_template | self.structured_output 
+        self.classifier_chain = prompt_template | self.structured_output
 
     def _get_classification_prompt(self) -> str:
-        """Get the system prompt for intent classification"""
-        return """You are an intent classification expert for an employee data analysis chatbot called MACOM AI Assistant.
+        return """You are an intent classifier for MACOM AI Assistant (HR chatbot).
 
-**YOUR TASK**: Analyze the user's message and classify their intent.
+INTENTS & TOOLS:
+- greeting → no tool (ONLY pure greetings with zero question content: hello/bye/thanks/typos like "hiii","gud morning")
+- data_query → structure_data tool (personal/leave balance/employee database queries)
+- policy_general_query → Policy_RAG_Implementation tool (policies/rules/person/role/HR/company queries)
+- out_of_scope → no tool (unrelated to HR/company)
+- unclear → no tool (gibberish/vague)
 
-**AVAILABLE INTENTS**:
+STRICT CLASSIFICATION RULES:
+1. "who is ..." → ALWAYS policy_general_query, NEVER greeting
+2. "who are ..." → ALWAYS policy_general_query, NEVER greeting
+3. Any job title/role (HR, manager, CEO, head, director, lead) → ALWAYS policy_general_query
+4. Any policy/rule/procedure question → ALWAYS policy_general_query
+5. Any employee data/leave/attendance question → ALWAYS data_query
+6. greeting ONLY when message has NO question and NO request whatsoever
+7. greeting + question → primary: policy_general_query or data_query, secondary: greeting
+8. requires_tool_call: true for data_query and policy_general_query, ALWAYS
+9. extracted_query must NEVER be null when requires_tool_call is true
 
-1. **GREETING**:
-   - User is saying hello, goodbye, or expressing gratitude
-   - Includes typos and variations: "helo", "hiii", "hiiii", "gud morning", "thanx", "bye bye"
-   - Examples: "hi", "hiii", "hello there", "good morning!", "thanks", "goodbye"
-   - Types: formal, casual, time_based, farewell, gratitude
+OUTPUT: Valid YAML only, no markdown:
+primary_intent: greeting|data_query|policy_general_query|out_of_scope|unclear
+secondary_intent: null|greeting|data_query|policy_general_query
+confidence: high|medium|low
+extracted_query: <full user query for tool use, NEVER null when requires_tool_call is true>
+greeting_type: formal|casual|time_based|farewell|gratitude|null
+requires_tool_call: true|false
+tool_to_use: Policy_RAG_Implementation|structure_data|null
+reasoning: <1 sentence>
 
-2. **DATA_QUERY**:
-   - User wants to retrieve, analyze, or explore employee/HR data
-   - Examples: "show me employee details", "who works in engineering", "leave balance"
-   - Requires database access
-
-3. **MIXED**:
-   - Greeting + Data query in same message
-   - Examples: "Hi! Can you show me employee list?", "Good morning, what's my leave balance?"
-   - Extract the query portion for processing
-
-4. **OUT_OF_SCOPE**:
-   - Requests unrelated to HR/employee data
-   - Examples: "what's the weather", "tell me a joke", "write me a poem"
-   - Politely decline these
-
-5. **UNCLEAR**:
-   - Ambiguous, too vague, or nonsensical input
-   - Examples: "asdfgh", "???", "help"
-
-**CRITICAL RULES**:
-- Be VERY tolerant of typos and variations (up to 3 character errors per word)
-- "helo" → GREETING
-- "hiii" → GREETING 
-- "hiiii" → GREETING
-- "gud mornign" → GREETING
-- "show employe detals" → DATA_QUERY (tolerate typos)
-- Mixed intents should extract ONLY the query portion
-- If unsure between GREETING and DATA_QUERY, choose DATA_QUERY (better to try than reject)
-
-**OUTPUT FORMAT**:
-Respond with ONLY valid YAML (no markdown code blocks, no preamble, no explanations):
-
-primary_intent: "greeting" | "data_query" | "mixed" | "out_of_scope" | "unclear"
-secondary_intent: null | "greeting" | "data_query"
-confidence: "high" | "medium" | "low"
-extracted_query: "only for mixed intent - the data query part"
-greeting_type: "formal" | "casual" | "time_based" | "farewell" | "gratitude" | null
-requires_data_access: true | false
-reasoning: "1 sentence explanation"
-
-**EXAMPLES**:
+EXAMPLES:
 
 Input: "hiii"
-Output:
 primary_intent: greeting
 secondary_intent: null
 confidence: high
 extracted_query: null
 greeting_type: casual
-requires_data_access: false
-reasoning: Casual greeting with repeated letters common in informal communication.
+requires_tool_call: false
+tool_to_use: null
+reasoning: Pure casual greeting with no question content, no tool needed.
 
-Input: "Good morning, show me the leave balance for John Doe"
-Output:
-primary_intent: mixed
-secondary_intent: data_query
+Input: "good morning"
+primary_intent: greeting
+secondary_intent: null
 confidence: high
-extracted_query: show me the leave balance for John Doe
+extracted_query: null
 greeting_type: time_based
-requires_data_access: true
-reasoning: Message contains both a time-based greeting and a specific HR data request."""
+requires_tool_call: false
+tool_to_use: null
+reasoning: Pure time-based greeting with no question content, no tool needed.
+
+Input: "who is the HR head"
+primary_intent: policy_general_query
+secondary_intent: null
+confidence: high
+extracted_query: who is the HR head
+greeting_type: null
+requires_tool_call: true
+tool_to_use: Policy_RAG_Implementation
+reasoning: "who is" with job title always routes to policy_general_query.
+
+Input: "Hi! Who is the HR head?"
+primary_intent: policy_general_query
+secondary_intent: greeting
+confidence: high
+extracted_query: Who is the HR head?
+greeting_type: null
+requires_tool_call: true
+tool_to_use: Policy_RAG_Implementation
+reasoning: Mixed greeting and person query, primary intent is policy_general_query.
+
+Input: "what is the leave policy?"
+primary_intent: policy_general_query
+secondary_intent: null
+confidence: high
+extracted_query: what is the leave policy?
+greeting_type: null
+requires_tool_call: true
+tool_to_use: Policy_RAG_Implementation
+reasoning: Company policy question requires Policy_RAG_Implementation tool.
+
+Input: "show me employees in engineering"
+primary_intent: data_query
+secondary_intent: null
+confidence: high
+extracted_query: show me employees in engineering
+greeting_type: null
+requires_tool_call: true
+tool_to_use: structure_data
+reasoning: Employee data retrieval requires structure_data tool.
+
+Input: "what is my leave balance?"
+primary_intent: data_query
+secondary_intent: null
+confidence: high
+extracted_query: what is my leave balance?
+greeting_type: null
+requires_tool_call: true
+tool_to_use: structure_data
+reasoning: Personal leave balance query requires structure_data tool.
+
+Input: "what's the weather?"
+primary_intent: out_of_scope
+secondary_intent: null
+confidence: high
+extracted_query: null
+greeting_type: null
+requires_tool_call: false
+tool_to_use: null
+reasoning: Weather is unrelated to HR or company policy.
+
+Input: "asdfgh"
+primary_intent: unclear
+secondary_intent: null
+confidence: high
+extracted_query: null
+greeting_type: null
+requires_tool_call: false
+tool_to_use: null
+reasoning: Gibberish with no meaningful intent."""
 
     def clear_cache(self):
-        """Clear the classification cache"""
         self._classification_cache.clear()
         logger.info("Classification cache cleared")
 
     def classify_intent(self, user_input: str) -> IntentClassification:
-        """
-        Classify user intent with retry logic.
-
-        Args:
-            user_input: User's message
-
-        Returns:
-            IntentClassification object
-        """
-        # Check cache first
         cache_key = user_input.lower().strip()
 
         if cache_key in self._classification_cache:
             return self._classification_cache[cache_key]
         try:
             classification = self.classifier_chain.invoke({"user_input": user_input})
-            # classification = IntentClassification(**result)
 
-             # Cache the result
+            # Ensure extracted_query is populated when tool call is required
+            if classification.requires_tool_call and not classification.extracted_query:
+                classification.extracted_query = user_input
+
             if len(self._classification_cache) >= self._cache_max_size:
-                # Remove oldest entry
                 self._classification_cache.pop(next(iter(self._classification_cache)))
 
             self._classification_cache[cache_key] = classification
-
             return classification
 
         except Exception as e:
             logger.error(f"Intent classification failed: {e}", exc_info=True)
-
-            # Fallback classification
             return IntentClassification(
                 primary_intent=IntentType.UNCLEAR,
                 confidence="low",
-                requires_data_access=False,
+                requires_tool_call=False,
                 reasoning=f"Classification failed: {str(e)}"
             )
 
-    def should_skip_table_routing(
-        self,
-        classification: IntentClassification
-    ) -> tuple[bool, Optional[str]]:
-        """
-        Determine if table routing should be skipped.
-
-        Args:
-            classification: Intent classification result
-
-        Returns:
-            Tuple of (should_skip, reason)
-        """
+    def should_skip_table_routing(self, classification: IntentClassification) -> tuple[bool, Optional[str]]:
         if classification.primary_intent == IntentType.GREETING:
             return True, "greeting_detected"
-
         if classification.primary_intent == IntentType.OUT_OF_SCOPE:
             return True, "out_of_scope"
-
-        if classification.primary_intent == IntentType.UNCLEAR:
-            if classification.confidence == "low":
-                return True, "unclear_intent"
-
-        # For MIXED and DATA_QUERY, proceed to table routing
+        if classification.primary_intent == IntentType.UNCLEAR and classification.confidence == "low":
+            return True, "unclear_intent"
         return False, None
 
 
 class GreetingGenerator:
-    """
-    Generates dynamic, contextual greeting responses.
-    """
-
     def __init__(self, llm: ChatOllama):
-        """
-        Initialize greeting generator.
-
-        Args:
-            llm: VertexAI LLM instance
-        """
         self.llm = llm
         self._init_generator_chain()
-
         logger.info("GreetingGenerator initialized")
 
     def _init_generator_chain(self):
-        """Initialize the greeting generation chain"""
-        system_prompt = self._get_generation_prompt()
-
         prompt_template = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
+            ("system", """You are MACOM AI Assistant, a friendly HR chatbot.
+Generate a warm, concise greeting response appropriate for the greeting type.
+Keep it short (1-2 sentences) and professional.
+Do not mention data or queries — just respond to the greeting naturally."""),
             ("human", "User said: {user_input}\nGreeting type: {greeting_type}")
         ])
-
         self.generator_chain = prompt_template | self.llm
 
-    def _get_generation_prompt(self) -> str:
-        """Get the system prompt for greeting generation"""
-        return """You are an intent classification expert for an employee data analysis chatbot called MACOM AI Assistant.
-
-**YOUR TASK**: Analyze the user's message and classify their intent.
-
-**AVAILABLE INTENTS**:
-1. **GREETING**: Hello, goodbye, gratitude, or typos (helo, hiii).
-2. **DATA_QUERY**: Retrieve/analyze employee/HR data.
-3. **MIXED**: Greeting + Data query (e.g., "Hi, show me my leave balance").
-4. **OUT_OF_SCOPE**: Unrelated to HR (weather, jokes, etc.).
-5. **UNCLEAR**: Ambiguous or nonsensical input.
-
-**CRITICAL RULES**:
-- Be VERY tolerant of typos (up to 3 character errors).
-- Mixed intents must extract the query portion.
-- If unsure, prefer DATA_QUERY over rejection."""
-
-    def generate_greeting(
-        self,
-        user_input: str,
-        greeting_type: str
-    ) -> str:
-        """
-        Generate contextual greeting response.
-
-        Args:
-            user_input: User's original message
-            greeting_type: Type of greeting (casual, formal, time_based, farewell, gratitude)
-
-        Returns:
-            Dynamic greeting response
-        """
+    def generate_greeting(self, user_input: str, greeting_type: str) -> str:
         try:
             response = self.generator_chain.invoke({
                 "user_input": user_input,
                 "greeting_type": greeting_type
             })
-
-            # Extract text from response
-            if hasattr(response, 'content'):
-                greeting_text = response.content.strip()
-            else:
-                greeting_text = str(response).strip()
-
-            logger.info(f"Generated {greeting_type} greeting")
-
-            return greeting_text
-
+            return response.content.strip() if hasattr(response, 'content') else str(response).strip()
         except Exception as e:
             logger.error(f"Greeting generation failed: {e}", exc_info=True)
-
-            # Fallback greeting
             return (
-                "Hello! I'm MACOM AI Assistant. I can help you analyze employee records, "
+                "Hello! I'm MACOM AI Assistant. I can help you with employee records, "
                 "leave data, and HR information. What would you like to know?"
             )
 
 
 class OutOfScopeHandler:
-    """
-    Handles out-of-scope requests with helpful redirects.
-    """
-
     def __init__(self, llm: ChatOllama):
-        """
-        Initialize out-of-scope handler.
-
-        Args:
-            llm: VertexAI LLM instance
-        """
         self.llm = llm
 
     def handle_out_of_scope(self, user_input: str) -> str:
-        """
-        Generate helpful response for out-of-scope requests.
-
-        Args:
-            user_input: User's message
-
-        Returns:
-            Polite redirection message
-        """
         return (
-            f"I appreciate your message: '{user_input}'. However, I'm specifically designed to help with "
-            "employee and HR data analysis. I can assist you with questions about employee records, leave "
-            "balances, department information, and other HR-related queries. What would you like to know "
-            "about our employee data?"
+            f"I appreciate your message, but I'm specifically designed to help with "
+            "employee and HR data analysis. I can assist with employee records, leave "
+            "balances, department information, and HR-related queries. What would you "
+            "like to know about our employee data?"
         )
 
 
-
 class UnclearHandler:
-    """Handler Unclear Scope requests with redirects"""
-
-    def __init__(self,llm:ChatOllama):
-        """
-        initialized unclear scope Handle
-        
-        Args: 
-           llm:Uses Chatollama
-        """
-        self.llm = llm 
+    def __init__(self, llm: ChatOllama):
+        self.llm = llm
 
     def handle_unclear(self, user_input: str) -> str:
-        """
-        Handle unclear or ambiguous input.
-
-        Args:
-            user_input: User's message
-
-        Returns:
-            Clarification request
-        """
         return (
             "I'm not quite sure what you're looking for. I specialize in employee and HR data analysis. "
             "Could you please rephrase your question? For example, you can ask about employee details, "
             "leave records, department information, or any HR-related data."
         )
-

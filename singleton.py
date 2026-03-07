@@ -37,7 +37,6 @@ class Init:
             max_retries=2
         )
 
-        self.llm = ChatOllama(model="deepseek-r1:8b", temperature=0.2).bind_tools(tools)
         self.intent_llm = ChatOllama(model="llama3.2:latest", temperature=0.1)
         self.intent_classifier = IntentClassifier(self.intent_llm)
         self.intent_classifier.clear_cache()
@@ -46,7 +45,7 @@ class Init:
         self.unclear_handler = UnclearHandler(self.intent_llm)
         self.engine = DataBase.connect(self)
         self.Database = DataBase(config=self.config)
-        self.Analyzer = DataAnalyzer(config=self.config, vertex_llm=self.vertex_llm,engine=self.engine)
+        # self.Analyzer = DataAnalyzer(config=self.config, vertex_llm=self.vertex_llm,engine=self.engine)
 
 
 # ✅ Initialize ONCE at module load time — this is the key
