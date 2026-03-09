@@ -10,12 +10,14 @@ TRANSPORT = "stdio"
 MCP_SERVER_PATH = "E:\\Agentic_Chatbot\\Mcp"
 MCP_SSE_URL = "http://localhost:3001/sse"
 
+# ✅ Fix: no 'global' keyword at module level — just declare normally
 _tools = None
 _client_ctx = None
 _session_ctx = None
 
 
-async def get_mcp_tools():
+async def init_mcp_session():
+    """Call once from lifespan — creates session in LangGraph's event loop."""
     global _tools, _client_ctx, _session_ctx
 
     if _tools is not None:
@@ -40,16 +42,20 @@ async def get_mcp_tools():
         await session.initialize()
         _tools = await load_mcp_tools(session)
         logging.info(f"[{TRANSPORT}] MCP tools loaded: {[t.name for t in _tools]}")
-        return _tools
 
     except Exception as e:
         logging.warning(f"MCP server unavailable ({TRANSPORT}): {e}")
         _tools = []
-        return _tools
+
+
+def get_mcp_tools() -> list:
+    """Synchronous getter — returns already-loaded tools."""
+    return _tools or []
 
 
 async def close_mcp_session():
-    global _session_ctx, _client_ctx
+    """Call from lifespan teardown."""
+    global _session_ctx, _client_ctx, _tools
     try:
         if _session_ctx:
             await _session_ctx.__aexit__(None, None, None)
@@ -57,3 +63,7 @@ async def close_mcp_session():
             await _client_ctx.__aexit__(None, None, None)
     except Exception as e:
         logging.warning(f"Error closing MCP session: {e}")
+    finally:
+        _tools = None
+        _session_ctx = None
+        _client_ctx = None
