@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class IntentType(str, Enum):
     GREETING = "greeting"
-    DATA_QUERY = "data_query"
+    MAIL = "MAIL_QUERY"
     POLICY_RAG_RETRIVAL = "policy_general_query"
     OUT_OF_SCOPE = "out_of_scope"
     UNCLEAR = "unclear"
@@ -28,7 +28,7 @@ class IntentClassification(BaseModel):
     extracted_query: Optional[str] = Field(default=None, description="Full user query for tool use")
     greeting_type: Optional[str] = Field(default=None, description="Type of greeting: formal, casual, time_based, farewell, gratitude")
     requires_tool_call: bool = Field(default=False, description="Whether this request needs a tool call")  # Fix: was requires_data_access
-    tool_to_use: Optional[str] = Field(default=None, description="Tool to use: Policy_RAG_Implementation or structure_data")  # Fix: added missing field
+    tool_to_use: Optional[str] = Field(default=None, description="Tool to use: Policy_RAG_Implementation or zoho_mail")  # Fix: added missing field
     reasoning: str = Field(description="Brief explanation of classification decision")
 
 
@@ -54,7 +54,7 @@ class IntentClassifier:
 
 INTENTS & TOOLS:
 - greeting → no tool (ONLY pure greetings with zero question content: hello/bye/thanks/typos like "hiii","gud morning")
-- data_query → structure_data tool (personal/leave balance/employee database queries)
+- mail_releted → zoho_mail tool
 - policy_general_query → Policy_RAG_Implementation tool (policies/rules/person/role/HR/company queries)
 - out_of_scope → no tool (unrelated to HR/company)
 - unclear → no tool (gibberish/vague)
@@ -77,30 +77,10 @@ confidence: high|medium|low
 extracted_query: <full user query for tool use, NEVER null when requires_tool_call is true>
 greeting_type: formal|casual|time_based|farewell|gratitude|null
 requires_tool_call: true|false
-tool_to_use: Policy_RAG_Implementation|structure_data|null
+tool_to_use: Policy_RAG_Implementation|zoho_mail|null
 reasoning: <1 sentence>
 
 EXAMPLES:
-
-Input: "hiii"
-primary_intent: greeting
-secondary_intent: null
-confidence: high
-extracted_query: null
-greeting_type: casual
-requires_tool_call: false
-tool_to_use: null
-reasoning: Pure casual greeting with no question content, no tool needed.
-
-Input: "good morning"
-primary_intent: greeting
-secondary_intent: null
-confidence: high
-extracted_query: null
-greeting_type: time_based
-requires_tool_call: false
-tool_to_use: null
-reasoning: Pure time-based greeting with no question content, no tool needed.
 
 Input: "who is the HR head"
 primary_intent: policy_general_query
@@ -131,26 +111,6 @@ greeting_type: null
 requires_tool_call: true
 tool_to_use: Policy_RAG_Implementation
 reasoning: Company policy question requires Policy_RAG_Implementation tool.
-
-Input: "show me employees in engineering"
-primary_intent: data_query
-secondary_intent: null
-confidence: high
-extracted_query: show me employees in engineering
-greeting_type: null
-requires_tool_call: true
-tool_to_use: structure_data
-reasoning: Employee data retrieval requires structure_data tool.
-
-Input: "what is my leave balance?"
-primary_intent: data_query
-secondary_intent: null
-confidence: high
-extracted_query: what is my leave balance?
-greeting_type: null
-requires_tool_call: true
-tool_to_use: structure_data
-reasoning: Personal leave balance query requires structure_data tool.
 
 Input: "what's the weather?"
 primary_intent: out_of_scope

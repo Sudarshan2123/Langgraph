@@ -20,7 +20,7 @@ class Init:
             max_retries=2
         )
 
-        self.intent_llm = ChatOllama(model="llama3.2:latest", temperature=0.1)
+        self.intent_llm = ChatOllama(model="llama3.2:latest", temperature=0.2)
         self.intent_classifier = IntentClassifier(self.intent_llm)
         self.intent_classifier.clear_cache()
         self.greeting_generator = GreetingGenerator(self.intent_llm)

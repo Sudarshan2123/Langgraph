@@ -1,15 +1,14 @@
 import asyncio
 import os
 import logging
-from contextlib import asynccontextmanager
 from langchain_core.messages.ai import AIMessage
 from langgraph.graph import END, StateGraph, START
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from langgraph.prebuilt import ToolNode, tools_condition
 from agentState import AgentState
 from singleton import get_pipeline
 from tools import tools as local_tools
-from mcp_loader import init_mcp_session, close_mcp_session, get_mcp_tools
+from mcp_loader import init_mcp_session, get_mcp_tools
 import translate
 
 SIMPLE_GREETINGS = [
@@ -22,7 +21,10 @@ LANGSMITH_API_KEY = os.environ.get("LANGSMITH_API_KEY")
 LANGSMITH_PROJECT = "Langgraph"
 
 
-# --- Helper Functions ---
+def get_all_tools():
+    return get_mcp_tools() + local_tools 
+
+
 def translate_input(user_input: str, lang: str) -> str:
     if lang != "en-US":
         if user_input.lower().strip() in SIMPLE_GREETINGS:
@@ -31,7 +33,6 @@ def translate_input(user_input: str, lang: str) -> str:
     return user_input
 
 
-# --- LangGraph Node Functions ---
 def translate_node(state: AgentState) -> dict:
     last_message = state["messages"][-1]
     if isinstance(last_message, dict):
@@ -40,15 +41,22 @@ def translate_node(state: AgentState) -> dict:
     else:
         user_input = last_message.content
         lang = getattr(last_message, "lang", "en-US")
+
+    if lang == "en-US" or user_input.lower().strip() in SIMPLE_GREETINGS:
+        return {}
+
     translated = translate_input(user_input, lang)
-    return {"messages": state["messages"][:-1] + [HumanMessage(content=translated)]}
+    return {"messages": [RemoveMessage(id=last_message.id), HumanMessage(content=translated)]}
 
 
 async def classifier_node(state: AgentState) -> dict:
-    last_message = state["messages"][-1].content
-    logging.info(f"Last message: {last_message}")
+    # ✅ Init MCP here — runs inside LangGraph's event loop, idempotent after first call
+    await init_mcp_session()
+
+    raw = state["messages"][-1]
+    last_message = raw.get("content", "") if isinstance(raw, dict) else raw.content  # ← fix here
+
     pipeline = get_pipeline()
-    # ✅ asyncio.to_thread instead of get_event_loop().run_in_executor
     classification = await asyncio.to_thread(
         pipeline.intent_classifier.classify_intent,
         last_message
@@ -92,48 +100,45 @@ def unclear_handler_node(state: AgentState) -> dict:
     response = pipeline.unclear_handler.handle_unclear(last_msg)
     return {"messages": [AIMessage(content=response)]}
 
-
-def finalResponder(state: AgentState) -> dict:
-    last_message = state["messages"][-1]
-    if isinstance(last_message, ToolMessage):
-        return {"messages": [AIMessage(content=last_message.content)]}
-
-def get_all_tools():
-    return local_tools + get_mcp_tools()
-
-def make_tool_node():
-    """Called after lifespan so MCP tools are already loaded."""
-    return ToolNode(get_all_tools())
-
+    
 def assistant_node(state: AgentState) -> dict:
     pipeline = get_pipeline()
     classification = state["classification"]
 
-    extracted_query = (
-        classification.extracted_query
-        or state["messages"][-1].content
+    raw = state["messages"][-1]
+    raw_query = raw.get("content", "") if isinstance(raw, dict) else raw.content  # ← fix here
+
+    extracted_query = str(raw_query.get("value", raw_query) if isinstance(raw_query, dict) else raw_query)
+
+    all_tools = get_all_tools()
+    logging.info(all_tools)
+    llm = pipeline.vertex_llm.bind_tools(all_tools)
+
+    system_content = (
+        "You are an intelligent Assitant. Use the provided tools to answer the user and invoke it.\n"
+        f"INTENT CONTEXT: The classifier identifies this as '{classification.primary_intent}'.\n"
+        f"SUGGESTED TOOL TO USE : {classification.tool_to_use}.\n"
+        "Instructions: Prioritize the suggested tool. Ensure 'user_input' is a simple string.\n"
+        "follow the input scheme provided by the tool strictly.\n"
+        "Check the provided tool result and presented it to the user directly is required"
     )
 
-    # ✅ get_mcp_tools() is now sync — tools already loaded by lifespan
-    all_tools = get_all_tools()
-    llm = pipeline.intent_llm.bind_tools(all_tools)
+    messages = [SystemMessage(content=system_content)]
+    messages.extend(state["messages"][-3:])#adjust the history box number
 
-    sys_msg = SystemMessage(content=(
-        "You are a helpful assistant with access to tools. "
-        "Analyze the user's query and call the most appropriate tool. "
-        "Pass the user's question as the 'user_input' argument to the tool."
-    ))
+    if not (state["messages"] and isinstance(state["messages"][-1], AIMessage)):
+        messages.append(HumanMessage(content=extracted_query))
 
-    return {"messages": [llm.invoke([sys_msg, HumanMessage(content=extracted_query)])]}
+    response = llm.invoke(messages)
+    return {"messages": [response]}
 
 
-# --- Lifespan: init MCP inside LangGraph's event loop ---
-@asynccontextmanager
-async def app_lifespan(app):
-    await init_mcp_session() 
-    builder.add_node("tools", make_tool_node()) # ✅ MCP session created in correct loop
-    yield
-    await close_mcp_session()  # ✅ clean shutdown
+
+class DynamicToolNode:
+    """Wraps ToolNode but rebuilds with current tools on each call."""
+    async def __call__(self, state):
+        node = ToolNode(get_all_tools())
+        return await node.ainvoke(state)
 
 
 # --- Build Graph ---
@@ -145,8 +150,7 @@ builder.add_node("assistant", assistant_node)
 builder.add_node("handle_greeting", greeting_handler_node)
 builder.add_node("handle_out_of_scope", out_of_scope_handler_node)
 builder.add_node("handle_unclear", unclear_handler_node)
-# ✅ Placeholder — will be replaced in lifespan with real tools
-builder.add_node("tools", ToolNode(local_tools))
+builder.add_node("tools", DynamicToolNode())  # ✅ Always uses latest tools
 
 builder.add_edge(START, "translate_input")
 builder.add_edge("translate_input", "intent_classifier")
