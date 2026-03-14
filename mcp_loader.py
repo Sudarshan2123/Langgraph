@@ -7,7 +7,7 @@ import logging
 
 TRANSPORT = "sse"
 MCP_SERVER_PATH = "E:\\Agentic_Chatbot\\Mcp"
-MCP_SSE_URL = "http://localhost:8000/sse"
+MCP_SSE_URL = "http://localhost:8080/sse"
 
 _tools = None
 _session = None

@@ -105,10 +105,10 @@ def assistant_node(state: AgentState) -> dict:
     pipeline = get_pipeline()
     classification = state["classification"]
 
-    raw = state["messages"][-1]
-    raw_query = raw.get("content", "") if isinstance(raw, dict) else raw.content  # ← fix here
+    # raw = state["messages"][-1]
+    # raw_query = raw.get("content", "") if isinstance(raw, dict) else raw.content  # ← fix here
 
-    extracted_query = str(raw_query.get("value", raw_query) if isinstance(raw_query, dict) else raw_query)
+    # extracted_query = str(raw_query.get("value", raw_query) if isinstance(raw_query, dict) else raw_query)
 
     all_tools = get_all_tools()
     logging.info(all_tools)
@@ -117,17 +117,18 @@ def assistant_node(state: AgentState) -> dict:
     system_content = (
         "You are an intelligent Assitant. Use the provided tools to answer the user and invoke it.\n"
         f"INTENT CONTEXT: The classifier identifies this as '{classification.primary_intent}'.\n"
-        f"SUGGESTED TOOL TO USE : {classification.tool_to_use}.\n"
         "Instructions: Prioritize the suggested tool. Ensure 'user_input' is a simple string.\n"
         "follow the input scheme provided by the tool strictly.\n"
-        "Check the provided tool result and presented it to the user directly is required"
+        "Check the provided tool result and presented it to the user directly is required.\n"
+        "You are a intelligent assistant if the user query require calling tool multiple times to satisfy the user query call it like if user ask dress code and leave policy then you require to call tool to answer both dress code and leave policy.\n"
+        "Once You are satisfied with the process then combine the answer of the tools used/required and provided it as plain text answer "
     )
 
     messages = [SystemMessage(content=system_content)]
-    messages.extend(state["messages"][-3:])#adjust the history box number
+    messages.extend(state["messages"][-5:])#adjust the history box number
 
-    if not (state["messages"] and isinstance(state["messages"][-1], AIMessage)):
-        messages.append(HumanMessage(content=extracted_query))
+    # if not (state["messages"] and isinstance(state["messages"][-1], AIMessage)):
+    #     messages.append(HumanMessage(content=extracted_query))
 
     response = llm.invoke(messages)
     return {"messages": [response]}
@@ -150,7 +151,7 @@ builder.add_node("assistant", assistant_node)
 builder.add_node("handle_greeting", greeting_handler_node)
 builder.add_node("handle_out_of_scope", out_of_scope_handler_node)
 builder.add_node("handle_unclear", unclear_handler_node)
-builder.add_node("tools", DynamicToolNode())  # ✅ Always uses latest tools
+builder.add_node("tools", DynamicToolNode()) 
 
 builder.add_edge(START, "translate_input")
 builder.add_edge("translate_input", "intent_classifier")
@@ -161,7 +162,7 @@ builder.add_conditional_edges("intent_classifier", route_after_classification, {
     "assistant": "assistant"
 })
 builder.add_edge("handle_greeting", END)
-builder.add_edge("handle_out_of_scope", END)
+builder.add_edge("handle_out_of_scope", END)    
 builder.add_edge("handle_unclear", END)
 builder.add_conditional_edges("assistant", tools_condition)
 builder.add_edge("tools", "assistant")
