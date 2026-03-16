@@ -79,7 +79,8 @@ def route_after_classification(state: AgentState):
 
 def greeting_handler_node(state: AgentState) -> dict:
     pipeline = get_pipeline()
-    last_msg = state["messages"][-1].content
+    last_message = state["messages"][-1]
+    last_msg = last_message.content if hasattr(last_message, "content") else last_message.get("content", "")
     response = pipeline.greeting_generator.generate_greeting(
         last_msg,
         state["classification"].greeting_type or "casual"
@@ -89,14 +90,16 @@ def greeting_handler_node(state: AgentState) -> dict:
 
 def out_of_scope_handler_node(state: AgentState) -> dict:
     pipeline = get_pipeline()
-    last_msg = state["messages"][-1].content
+    last_message = state["messages"][-1]
+    last_msg = last_message.content if hasattr(last_message, "content") else last_message.get("content", "")
     response = pipeline.out_of_scope_handler.handle_out_of_scope(last_msg)
     return {"messages": [AIMessage(content=response)]}
 
 
 def unclear_handler_node(state: AgentState) -> dict:
     pipeline = get_pipeline()
-    last_msg = state["messages"][-1].content
+    last_message = state["messages"][-1]
+    last_msg = last_message.content if hasattr(last_message, "content") else last_message.get("content", "")
     response = pipeline.unclear_handler.handle_unclear(last_msg)
     return {"messages": [AIMessage(content=response)]}
 
@@ -121,7 +124,7 @@ def assistant_node(state: AgentState) -> dict:
         "follow the input scheme provided by the tool strictly.\n"
         "Check the provided tool result and presented it to the user directly is required.\n"
         "You are a intelligent assistant if the user query require calling tool multiple times to satisfy the user query call it like if user ask dress code and leave policy then you require to call tool to answer both dress code and leave policy.\n"
-        "Once You are satisfied with the process then combine the answer of the tools used/required and provided it as plain text answer "
+        "Once You are satisfied with the process then combine the answer of the tools used/required and provided it as AI message after understanding it "
     )
 
     messages = [SystemMessage(content=system_content)]

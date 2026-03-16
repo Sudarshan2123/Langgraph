@@ -6,7 +6,7 @@ Replaces static pattern matching with LLM-powered intent detection
 import logging
 from typing import Literal, Optional
 from enum import Enum
-from langchain_ollama import ChatOllama
+from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -30,9 +30,9 @@ class IntentClassification(BaseModel):
 
 
 class IntentClassifier:
-    def __init__(self, llm: ChatOllama):
+    def __init__(self, llm: ChatNVIDIA):
         self.llm = llm
-        self.structured_output = llm.with_structured_output(IntentClassification)
+        self.structured_output = llm.with_structured_output(IntentClassification,method="json_mode")
         self._init_classifier_chain()
         self._classification_cache = {}
         self._cache_max_size = 100
@@ -49,64 +49,42 @@ class IntentClassifier:
     def _get_classification_prompt(self) -> str:
         return """You are an intent classifier for MACOM AI Assistant (HR chatbot).
 
-INTENTS & TOOLS:
-- greeting → no tool (ONLY pure greetings with zero question content: hello/bye/thanks/typos like "hiii","gud morning")
-- mail_releted → zoho_mail tool
-- policy_general_query → Policy_RAG_Implementation tool (policies/rules/person/role/HR/company queries)
-- out_of_scope → no tool (unrelated to HR/company)
-- unclear → no tool (gibberish/vague)
+INTENTS:
+- greeting: ONLY pure greetings with zero question content (hello/bye/thanks/typos like "hiii", "gud morning")
+- MAIL_QUERY: anything related to email or mail
+- policy_general_query: policies/rules/person/role/HR/company queries
+- out_of_scope: unrelated to HR/company
+- unclear: gibberish/vague
 
 STRICT CLASSIFICATION RULES:
 1. Any job title/role (HR, manager, CEO, head, director, lead) → ALWAYS policy_general_query
 2. Any policy/rule/procedure question → ALWAYS policy_general_query
 3. greeting ONLY when message has NO question and NO request whatsoever
-4. greeting + question → primary: policy_general_query or data_query, secondary: greeting
-5. requires_tool_call: true for data_query and policy_general_query, ALWAYS
+4. greeting + question → primary: policy_general_query
+5. requires_tool_call: true for MAIL_QUERY and policy_general_query ALWAYS
 6. extracted_query must NEVER be null when requires_tool_call is true
 
-OUTPUT: Valid YAML only, no markdown:
-primary_intent: greeting|data_query|policy_general_query|out_of_scope|unclear
-confidence: high|medium|low
-extracted_query: <full user query for tool use, NEVER null when requires_tool_call is true>
-greeting_type: formal|casual|time_based|farewell|gratitude|null
-requires_tool_call: true|false
+You MUST respond with a valid JSON object only. No explanation, no markdown, no extra text.
 
 EXAMPLES:
 
 Input: "who is the HR head"
-primary_intent: policy_general_query
-confidence: high
-extracted_query: who is the HR head
-greeting_type: null
-requires_tool_call: true
-
-Input: "Hi! Who is the HR head?"
-primary_intent: policy_general_query
-confidence: high
-extracted_query: Who is the HR head?
-greeting_type: null
-requires_tool_call: true
+{{"primary_intent": "policy_general_query", "confidence": "high", "extracted_query": "who is the HR head", "greeting_type": null, "requires_tool_call": true}}
 
 Input: "what is the leave policy?"
-primary_intent: policy_general_query
-confidence: high
-extracted_query: what is the leave policy?
-greeting_type: null
-requires_tool_call: true
+{{"primary_intent": "policy_general_query", "confidence": "high", "extracted_query": "what is the leave policy?", "greeting_type": null, "requires_tool_call": true}}
+
+Input: "hello"
+{{"primary_intent": "greeting", "confidence": "high", "extracted_query": null, "greeting_type": "casual", "requires_tool_call": false}}
+
+Input: "good morning"
+{{"primary_intent": "greeting", "confidence": "high", "extracted_query": null, "greeting_type": "time_based", "requires_tool_call": false}}
 
 Input: "what's the weather?"
-primary_intent: out_of_scope
-confidence: high
-extracted_query: null
-greeting_type: null
-requires_tool_call: false
+{{"primary_intent": "out_of_scope", "confidence": "high", "extracted_query": null, "greeting_type": null, "requires_tool_call": false}}
 
 Input: "asdfgh"
-primary_intent: unclear
-confidence: high
-extracted_query: null
-greeting_type: null
-requires_tool_call: false
+{{"primary_intent": "unclear", "confidence": "high", "extracted_query": null, "greeting_type": null, "requires_tool_call": false}}
 """
 
     def clear_cache(self):
@@ -137,7 +115,6 @@ requires_tool_call: false
                 primary_intent=IntentType.UNCLEAR,
                 confidence="low",
                 requires_tool_call=False,
-                reasoning=f"Classification failed: {str(e)}"
             )
 
     def should_skip_table_routing(self, classification: IntentClassification) -> tuple[bool, Optional[str]]:
@@ -151,7 +128,7 @@ requires_tool_call: false
 
 
 class GreetingGenerator:
-    def __init__(self, llm: ChatOllama):
+    def __init__(self, llm: ChatNVIDIA):
         self.llm = llm
         self._init_generator_chain()
         logger.info("GreetingGenerator initialized")
@@ -172,7 +149,12 @@ Do not mention data or queries — just respond to the greeting naturally."""),
                 "user_input": user_input,
                 "greeting_type": greeting_type
             })
-            return response.content.strip() if hasattr(response, 'content') else str(response).strip()
+            if hasattr(response, 'content'):
+                return response.content.strip()
+            elif isinstance(response, dict):
+            # ChatNVIDIA can return a dict with a 'content' or 'text' key
+                return (response.get('content') or response.get('text') or str(response)).strip()
+            return str(response).strip()
         except Exception as e:
             logger.error(f"Greeting generation failed: {e}", exc_info=True)
             return (
@@ -182,7 +164,7 @@ Do not mention data or queries — just respond to the greeting naturally."""),
 
 
 class OutOfScopeHandler:
-    def __init__(self, llm: ChatOllama):
+    def __init__(self, llm: ChatNVIDIA):
         self.llm = llm
 
     def handle_out_of_scope(self, user_input: str) -> str:
@@ -195,7 +177,7 @@ class OutOfScopeHandler:
 
 
 class UnclearHandler:
-    def __init__(self, llm: ChatOllama):
+    def __init__(self, llm: ChatNVIDIA):
         self.llm = llm
 
     def handle_unclear(self, user_input: str) -> str:
